@@ -16,8 +16,19 @@ const EMPTY_STATE = {
   workspaces: [],
 };
 
+const VERIFICATION_RANK = {
+  untested: 0,
+  predicted: 1,
+  explained: 2,
+  applied: 3,
+};
+
 function makeId(prefix) {
   return `${prefix}-${crypto.randomUUID()}`;
+}
+
+function maxVerification(current = 'untested', candidate = 'untested') {
+  return (VERIFICATION_RANK[candidate] || 0) > (VERIFICATION_RANK[current] || 0) ? candidate : current;
 }
 
 function normalizeState(data) {
@@ -244,6 +255,16 @@ export default function App() {
       .finally(() => setLoading(false));
   }, [connection]);
 
+  useEffect(() => {
+    if (!dirtyGraph && !dirtyState) return undefined;
+    const warn = (event) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirtyGraph, dirtyState]);
+
   function applyGraph(next, trailValue, selectedId) {
     setGraphDoc(next);
     setTrail(trailValue);
@@ -253,22 +274,23 @@ export default function App() {
     setSourceDrawer(null);
   }
 
-  async function loadConcepts(projectData, ids) {
-    const unique = [...new Set(ids.filter(Boolean))].filter((id) => !concepts[id]);
+  async function loadConcepts(projectData, ids, { replace = false } = {}) {
+    const all = [...new Set(ids.filter(Boolean))];
+    const unique = replace ? all : all.filter((id) => !concepts[id]);
     if (!unique.length) return {};
     const docs = await Promise.all(unique.map((id) => readJson(connection, `projects/${projectData.id}/concepts/${id}.json`)));
     const loaded = {};
     docs.forEach((doc) => { loaded[doc.data.id] = normalizeConcept(doc.data); });
-    setConcepts((previous) => ({ ...previous, ...loaded }));
+    setConcepts((previous) => replace ? loaded : { ...previous, ...loaded });
     return loaded;
   }
 
-  async function fetchGraph(projectData, graphId) {
+  async function fetchGraph(projectData, graphId, { replaceConcepts = false } = {}) {
     const path = `projects/${projectData.id}/graphs/${graphId}.json`;
     const doc = await readJson(connection, path);
     const graph = normalizeGraph(doc.data);
     const conceptIds = [...graph.nodes.map((node) => node.concept), graph.rootConcept];
-    await loadConcepts(projectData, conceptIds);
+    await loadConcepts(projectData, conceptIds, { replace: replaceConcepts });
     return { ...doc, data: graph, path };
   }
 
@@ -320,13 +342,12 @@ export default function App() {
       const [stateFile, indexFile, firstGraph] = await Promise.all([
         readJson(connection, projectData.statePath),
         readJson(connection, projectData.indexPath),
-        fetchGraph(projectData, projectData.entryGraph),
+        fetchGraph(projectData, projectData.entryGraph, { replaceConcepts: true }),
       ]);
       setProjectRef(reference);
       setProject(projectData);
       setProjectIndex(normalizeIndex(indexFile.data));
       setStateDoc({ ...stateFile, data: normalizeState(stateFile.data) });
-      setConcepts({});
       applyGraph(firstGraph, [{ id: firstGraph.data.id, title: firstGraph.data.title }]);
       setDirtyState(stateFile.data.version !== 2);
       setActiveWorkspaceId(null);
@@ -338,7 +359,11 @@ export default function App() {
   }
 
   async function openGraph(graphId, { trailMode = 'replace', selectedId = null } = {}) {
-    if (!project || loading || saving || graphDoc?.data.id === graphId) return;
+    if (!project || loading || saving) return;
+    if (graphDoc?.data.id === graphId) {
+      if (selectedId) await selectConcept(selectedId);
+      return;
+    }
     if (!(await saveBeforeNavigation())) return;
     setLoading(true);
     setError('');
@@ -361,7 +386,8 @@ export default function App() {
 
   async function openTrailIndex(index) {
     const target = trail[index];
-    if (!target || !project || loading || saving || target.id === graphDoc?.data.id) return;
+    if (!target || !project || loading || saving) return;
+    if (target.id === graphDoc?.data.id) return;
     if (!(await saveBeforeNavigation())) return;
     setLoading(true);
     setError('');
@@ -383,8 +409,13 @@ export default function App() {
   async function selectConcept(conceptId) {
     if (!project) return;
     if (!concepts[conceptId]) {
-      try { await loadConcepts(project, [conceptId]); }
-      catch (err) { setError(err.message); return; }
+      try {
+        const loaded = await loadConcepts(project, [conceptId]);
+        if (!loaded[conceptId] && !concepts[conceptId]) return;
+      } catch (err) {
+        setError(err.message);
+        return;
+      }
     }
     setSelectedConceptId(conceptId);
     setSourceDrawer(null);
@@ -409,8 +440,15 @@ export default function App() {
     mutateState((state) => ({
       ...state,
       annotations: [...state.annotations, {
-        id: makeId('annotation'), type, targetType: 'concept', targetId: selectedConceptId,
-        contextGraph: graphDoc?.data.id, text, status: 'open', createdAt: now, updatedAt: now,
+        id: makeId('annotation'),
+        type,
+        targetType: 'concept',
+        targetId: selectedConceptId,
+        contextGraph: graphDoc?.data.id,
+        text,
+        status: 'open',
+        createdAt: now,
+        updatedAt: now,
       }],
     }));
   }
@@ -423,18 +461,43 @@ export default function App() {
     }));
   }
 
+  function setAnnotationResolution(id, resolution) {
+    const now = new Date().toISOString();
+    mutateState((state) => ({
+      ...state,
+      annotations: state.annotations.map((item) => item.id === id
+        ? { ...item, ...(resolution ? { resolution } : { resolution: undefined }), updatedAt: now }
+        : item),
+    }));
+  }
+
   function submitPrediction(check, response) {
     if (!selectedConceptId) return;
     const now = new Date().toISOString();
+    const candidateVerification = check.type === 'apply' ? 'applied' : check.type === 'explain' ? 'explained' : 'predicted';
     mutateState((state) => {
       const current = state.learning[selectedConceptId] || { exposure: 'unseen', confidence: 'low', verification: 'untested' };
       return {
         ...state,
-        learning: { ...state.learning, [selectedConceptId]: { ...current, exposure: 'studied', updatedAt: now } },
+        learning: {
+          ...state.learning,
+          [selectedConceptId]: {
+            ...current,
+            exposure: 'studied',
+            verification: maxVerification(current.verification, candidateVerification),
+            updatedAt: now,
+          },
+        },
         predictions: [...state.predictions, {
-          id: makeId('prediction'), checkId: check.id, conceptId: selectedConceptId,
-          graphId: graphDoc?.data.id, prompt: check.prompt, response, outcome: 'unreviewed',
-          createdAt: now, updatedAt: now,
+          id: makeId('prediction'),
+          checkId: check.id,
+          conceptId: selectedConceptId,
+          graphId: graphDoc?.data.id,
+          prompt: check.prompt,
+          response,
+          outcome: 'unreviewed',
+          createdAt: now,
+          updatedAt: now,
         }],
       };
     });
@@ -452,16 +515,31 @@ export default function App() {
 
   function pinConcept(conceptId) {
     const now = new Date().toISOString();
+    const existing = learningState.workspaces.find((item) => item.id === activeWorkspaceId);
+    const targetId = existing ? activeWorkspaceId : makeId('workspace');
+    if (!existing) setActiveWorkspaceId(targetId);
+
     mutateState((state) => {
       let workspaces = [...state.workspaces];
-      let targetId = activeWorkspaceId;
-      if (!targetId || !workspaces.some((item) => item.id === targetId)) {
-        targetId = makeId('workspace');
-        workspaces.push({ id: targetId, title: 'Current investigation', question: '', conceptIds: [], graphIds: [], temporary: true, createdAt: now, updatedAt: now });
-        setActiveWorkspaceId(targetId);
+      if (!workspaces.some((item) => item.id === targetId)) {
+        workspaces.push({
+          id: targetId,
+          title: 'Current investigation',
+          question: '',
+          conceptIds: [],
+          graphIds: [],
+          temporary: true,
+          createdAt: now,
+          updatedAt: now,
+        });
       }
       workspaces = workspaces.map((workspace) => workspace.id === targetId
-        ? { ...workspace, conceptIds: [...new Set([...workspace.conceptIds, conceptId])], graphIds: [...new Set([...workspace.graphIds, graphDoc?.data.id].filter(Boolean))], updatedAt: now }
+        ? {
+            ...workspace,
+            conceptIds: [...new Set([...workspace.conceptIds, conceptId])],
+            graphIds: [...new Set([...workspace.graphIds, graphDoc?.data.id].filter(Boolean))],
+            updatedAt: now,
+          }
         : workspace);
       return { ...state, workspaces };
     });
@@ -484,6 +562,7 @@ export default function App() {
 
   async function navigateAnnotation(annotation) {
     if (annotation.targetType === 'graph') return openGraph(annotation.targetId);
+    if (annotation.targetType === 'edge' && annotation.contextGraph) return openGraph(annotation.contextGraph);
     if (annotation.targetType === 'concept') {
       const entry = projectIndex?.concepts?.find((item) => item.id === annotation.targetId);
       if (entry) return openSearchResult(entry);
@@ -500,6 +579,7 @@ export default function App() {
 
   function toggleLayer(layerId) {
     setVisibleLayers((previous) => {
+      if (previous.size === 1 && previous.has(layerId)) return previous;
       const next = new Set(previous);
       if (next.has(layerId)) next.delete(layerId); else next.add(layerId);
       return next;
@@ -531,15 +611,32 @@ export default function App() {
 
   async function closeProject() {
     if (loading || saving || !(await saveBeforeNavigation())) return;
-    setProject(null); setProjectRef(null); setProjectIndex(null); setGraphDoc(null); setStateDoc(null);
-    setConcepts({}); setSelectedConceptId(null); setTrail([]); setSourceDrawer(null); setError('');
+    setProject(null);
+    setProjectRef(null);
+    setProjectIndex(null);
+    setGraphDoc(null);
+    setStateDoc(null);
+    setConcepts({});
+    setSelectedConceptId(null);
+    setTrail([]);
+    setSourceDrawer(null);
+    setError('');
   }
 
   async function disconnect() {
-    if ((project && (loading || saving || !(await saveBeforeNavigation())))) return;
+    if (project && (loading || saving || !(await saveBeforeNavigation()))) return;
     await clearConnection();
-    setConnection(null); setManifest(null); setProject(null); setProjectRef(null); setProjectIndex(null);
-    setGraphDoc(null); setStateDoc(null); setConcepts({}); setSelectedConceptId(null); setTrail([]); setSourceDrawer(null);
+    setConnection(null);
+    setManifest(null);
+    setProject(null);
+    setProjectRef(null);
+    setProjectIndex(null);
+    setGraphDoc(null);
+    setStateDoc(null);
+    setConcepts({});
+    setSelectedConceptId(null);
+    setTrail([]);
+    setSourceDrawer(null);
   }
 
   const unsaved = dirtyGraph || dirtyState;
@@ -552,7 +649,9 @@ export default function App() {
     return (
       <>
         {error && <div className="global-error">{error}</div>}
-        {manifest ? <ProjectPicker projects={manifest.projects} onOpen={openProject} onDisconnect={disconnect} loading={loading} /> : <div className="center-message">{loading ? 'Loading projects…' : 'No project manifest loaded.'}</div>}
+        {manifest
+          ? <ProjectPicker projects={manifest.projects} onOpen={openProject} onDisconnect={disconnect} loading={loading} />
+          : <div className="center-message">{loading ? 'Loading projects…' : 'No project manifest loaded.'}</div>}
       </>
     );
   }
@@ -564,7 +663,10 @@ export default function App() {
         <div className="breadcrumbs" aria-label="Graph path">
           <button type="button" onClick={closeProject}>{projectTitle}</button>
           {trail.map((item, index) => (
-            <span key={`${item.id}-${index}`}><span className="crumb-separator">›</span><button type="button" className={index === trail.length - 1 ? 'current' : ''} onClick={() => openTrailIndex(index)}>{item.title}</button></span>
+            <span key={`${item.id}-${index}`}>
+              <span className="crumb-separator">›</span>
+              <button type="button" className={index === trail.length - 1 ? 'current' : ''} onClick={() => openTrailIndex(index)}>{item.title}</button>
+            </span>
           ))}
         </div>
         <ProjectSearch index={projectIndex} onSelect={openSearchResult} disabled={loading || saving} />
@@ -615,6 +717,7 @@ export default function App() {
               onSelectConcept={selectConcept}
               onDive={diveInto}
               onMoveNode={moveNode}
+              onOpenSource={setSourceDrawer}
             />
           </div>
         </section>
@@ -622,7 +725,6 @@ export default function App() {
         <ConceptPanel
           concept={selectedConcept}
           conceptIndex={projectIndex}
-          project={project}
           graphId={graphDoc?.data.id}
           learningState={learningState}
           activeWorkspace={activeWorkspace}
@@ -631,13 +733,16 @@ export default function App() {
           onSetLearning={setLearning}
           onAddAnnotation={addAnnotation}
           onSetAnnotationStatus={setAnnotationStatus}
+          onSetAnnotationResolution={setAnnotationResolution}
           onSubmitPrediction={submitPrediction}
           onPinConcept={pinConcept}
           onOpenSource={setSourceDrawer}
         />
       </div>
 
-      {sourceDrawer && <SourceDrawer source={sourceDrawer} project={project} onClose={() => setSourceDrawer(null)} />}
+      {sourceDrawer && (
+        <SourceDrawer source={sourceDrawer} project={project} connection={connection} onClose={() => setSourceDrawer(null)} />
+      )}
     </div>
   );
 }
