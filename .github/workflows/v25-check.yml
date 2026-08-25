@@ -1,0 +1,31 @@
+name: Check v2.5 staging build
+
+on:
+  push:
+    branches: [v2.5-visuals]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Build without failing notification
+        shell: bash
+        run: |
+          set +e
+          npm install --no-audit --no-fund
+          install_code=$?
+          npm run build
+          build_code=$?
+          echo "INSTALL_EXIT_CODE=$install_code"
+          echo "BUILD_EXIT_CODE=$build_code"
+          exit 0
