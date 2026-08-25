@@ -12,6 +12,31 @@ import {
 import ConceptNode from './ConceptNode.jsx';
 
 const nodeTypes = { concept: ConceptNode };
+const NODE_WIDTH = 220;
+const NODE_HEIGHT = 96;
+
+function chooseHandles(sourceNode, targetNode) {
+  if (!sourceNode || !targetNode) {
+    return { sourceHandle: 'source-right', targetHandle: 'target-left' };
+  }
+
+  const sourceX = sourceNode.position.x + NODE_WIDTH / 2;
+  const sourceY = sourceNode.position.y + NODE_HEIGHT / 2;
+  const targetX = targetNode.position.x + NODE_WIDTH / 2;
+  const targetY = targetNode.position.y + NODE_HEIGHT / 2;
+  const dx = targetX - sourceX;
+  const dy = targetY - sourceY;
+
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0
+      ? { sourceHandle: 'source-right', targetHandle: 'target-left' }
+      : { sourceHandle: 'source-left', targetHandle: 'target-right' };
+  }
+
+  return dy >= 0
+    ? { sourceHandle: 'source-bottom', targetHandle: 'target-top' }
+    : { sourceHandle: 'source-top', targetHandle: 'target-bottom' };
+}
 
 export default function GraphCanvas({
   graph,
@@ -53,15 +78,39 @@ export default function GraphCanvas({
 
   const makeEdges = useMemo(() => () => {
     if (!graph) return [];
-    return graph.edges.map((edge) => ({
-      id: edge.id,
-      source: edge.source,
-      target: edge.target,
-      type: 'smoothstep',
-      label: edge.label || undefined,
-      className: `edge-${edge.type}`,
-      markerEnd: { type: MarkerType.ArrowClosed },
-    }));
+    const nodeLookup = new Map(graph.nodes.map((node) => [node.id, node]));
+
+    return graph.edges.map((edge) => {
+      const handles = chooseHandles(nodeLookup.get(edge.source), nodeLookup.get(edge.target));
+      return {
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: handles.sourceHandle,
+        targetHandle: handles.targetHandle,
+        type: 'smoothstep',
+        pathOptions: { offset: 28, borderRadius: 14 },
+        label: edge.label || undefined,
+        labelShowBg: Boolean(edge.label),
+        labelBgPadding: [7, 4],
+        labelBgBorderRadius: 5,
+        labelStyle: { fill: '#b8c3d2', fontSize: 10, fontWeight: 550 },
+        labelBgStyle: {
+          fill: '#0d131b',
+          fillOpacity: 0.98,
+          stroke: '#344156',
+          strokeWidth: 0.65,
+        },
+        className: `edge-${edge.type}`,
+        style: { stroke: '#63758d', strokeWidth: 1.5 },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: '#7f91aa',
+          width: 15,
+          height: 15,
+        },
+      };
+    });
   }, [graph]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(makeNodes());

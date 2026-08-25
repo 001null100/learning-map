@@ -166,10 +166,61 @@ export default function App() {
     return { ...doc, path };
   }
 
-  function blockDirtyGraphNavigation() {
-    if (!dirtyGraph) return false;
-    setError('Save or refresh the current layout before leaving this graph.');
-    return true;
+  async function persistChanges({ notify = false } = {}) {
+    if (!project || !connection || (!dirtyGraph && !dirtyState)) return true;
+    if (saving) return false;
+
+    const graphToSave = dirtyGraph ? graphDoc : null;
+    const stateToSave = dirtyState ? stateDoc : null;
+    setSaving(true);
+    setError('');
+    if (notify) setNotice('');
+
+    try {
+      if (graphToSave) {
+        const result = await writeJson(
+          connection,
+          graphToSave.path,
+          graphToSave.data,
+          graphToSave.sha,
+          `Rearrange ${graphToSave.data.title}`,
+        );
+        setGraphDoc((previous) => (
+          previous?.path === graphToSave.path
+            ? { ...previous, sha: result.content.sha }
+            : previous
+        ));
+        setDirtyGraph(false);
+      }
+
+      if (stateToSave) {
+        const result = await writeJson(
+          connection,
+          project.statePath,
+          stateToSave.data,
+          stateToSave.sha,
+          `Update ${project.title} learning state`,
+        );
+        setStateDoc((previous) => ({ ...previous, sha: result.content.sha }));
+        setDirtyState(false);
+      }
+
+      if (notify) {
+        setNotice('Saved to GitHub');
+        window.setTimeout(() => setNotice(''), 2200);
+      }
+      return true;
+    } catch (err) {
+      setError(err.message);
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveBeforeNavigation() {
+    if (!dirtyGraph && !dirtyState) return true;
+    return persistChanges({ notify: false });
   }
 
   async function openProject(reference) {
@@ -201,7 +252,9 @@ export default function App() {
   }
 
   async function diveInto(graphId) {
-    if (!project || graphDoc?.data.id === graphId || blockDirtyGraphNavigation()) return;
+    if (!project || graphDoc?.data.id === graphId || loading || saving) return;
+    if (!(await saveBeforeNavigation())) return;
+
     setLoading(true);
     setError('');
     try {
@@ -219,7 +272,9 @@ export default function App() {
 
   async function openTrailIndex(index) {
     const target = trail[index];
-    if (!target || !project || blockDirtyGraphNavigation()) return;
+    if (!target || !project || loading || saving) return;
+    if (!(await saveBeforeNavigation())) return;
+
     setLoading(true);
     setError('');
     try {
@@ -236,7 +291,9 @@ export default function App() {
   }
 
   async function openSearchResult(entry) {
-    if (!project || !entry || blockDirtyGraphNavigation()) return;
+    if (!project || !entry || loading || saving) return;
+    if (!(await saveBeforeNavigation())) return;
+
     setLoading(true);
     setError('');
     try {
@@ -344,44 +401,11 @@ export default function App() {
   }
 
   async function saveChanges() {
-    if (!project || !connection || (!dirtyGraph && !dirtyState)) return;
-    setSaving(true);
-    setError('');
-    setNotice('');
-    try {
-      if (dirtyGraph) {
-        const result = await writeJson(
-          connection,
-          graphDoc.path,
-          graphDoc.data,
-          graphDoc.sha,
-          `Rearrange ${graphDoc.data.title}`,
-        );
-        setGraphDoc((previous) => ({ ...previous, sha: result.content.sha }));
-        setDirtyGraph(false);
-      }
-      if (dirtyState) {
-        const result = await writeJson(
-          connection,
-          project.statePath,
-          stateDoc.data,
-          stateDoc.sha,
-          `Update ${project.title} learning state`,
-        );
-        setStateDoc((previous) => ({ ...previous, sha: result.content.sha }));
-        setDirtyState(false);
-      }
-      setNotice('Saved to GitHub');
-      window.setTimeout(() => setNotice(''), 2200);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
+    return persistChanges({ notify: true });
   }
 
   async function refreshCurrent() {
-    if (!project || !graphDoc) return;
+    if (!project || !graphDoc || saving) return;
     setLoading(true);
     setError('');
     try {
@@ -405,11 +429,10 @@ export default function App() {
     }
   }
 
-  function closeProject() {
-    if (dirtyGraph || dirtyState) {
-      setError('Save or refresh your changes before returning to the project list.');
-      return;
-    }
+  async function closeProject() {
+    if (loading || saving) return;
+    if (!(await saveBeforeNavigation())) return;
+
     setProject(null);
     setProjectRef(null);
     setProjectIndex(null);
@@ -422,10 +445,9 @@ export default function App() {
   }
 
   async function disconnect() {
-    if (dirtyGraph || dirtyState) {
-      setError('Save or refresh your changes before disconnecting this browser.');
-      return;
-    }
+    if (loading || saving) return;
+    if (!(await saveBeforeNavigation())) return;
+
     await clearConnection();
     setConnection(null);
     setManifest(null);
