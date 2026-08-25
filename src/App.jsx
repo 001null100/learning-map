@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import GraphCanvas from './components/GraphCanvas.jsx';
 import ConceptPanel from './components/ConceptPanel.jsx';
+import ProjectSearch from './components/ProjectSearch.jsx';
 import { clearConnection, getConnection, saveConnection } from './lib/storage.js';
 import { readJson, testConnection, writeJson } from './lib/github.js';
 
@@ -111,6 +112,7 @@ export default function App() {
   const [manifest, setManifest] = useState(null);
   const [projectRef, setProjectRef] = useState(null);
   const [project, setProject] = useState(null);
+  const [projectIndex, setProjectIndex] = useState(null);
   const [stateDoc, setStateDoc] = useState(null);
   const [graphDoc, setGraphDoc] = useState(null);
   const [concepts, setConcepts] = useState({});
@@ -164,6 +166,12 @@ export default function App() {
     return { ...doc, path };
   }
 
+  function blockDirtyGraphNavigation() {
+    if (!dirtyGraph) return false;
+    setError('Save or refresh the current layout before leaving this graph.');
+    return true;
+  }
+
   async function openProject(reference) {
     setLoading(true);
     setError('');
@@ -171,12 +179,14 @@ export default function App() {
     try {
       const projectFile = await readJson(connection, reference.path);
       const projectData = projectFile.data;
-      const [stateFile, firstGraph] = await Promise.all([
+      const [stateFile, indexFile, firstGraph] = await Promise.all([
         readJson(connection, projectData.statePath),
+        readJson(connection, projectData.indexPath),
         fetchGraph(projectData, projectData.entryGraph),
       ]);
       setProjectRef(reference);
       setProject(projectData);
+      setProjectIndex(indexFile.data);
       setStateDoc(stateFile);
       setGraphDoc(firstGraph);
       setTrail([{ id: firstGraph.data.id, title: firstGraph.data.title }]);
@@ -191,7 +201,7 @@ export default function App() {
   }
 
   async function diveInto(graphId) {
-    if (!project || graphDoc?.data.id === graphId) return;
+    if (!project || graphDoc?.data.id === graphId || blockDirtyGraphNavigation()) return;
     setLoading(true);
     setError('');
     try {
@@ -209,7 +219,7 @@ export default function App() {
 
   async function openTrailIndex(index) {
     const target = trail[index];
-    if (!target || !project) return;
+    if (!target || !project || blockDirtyGraphNavigation()) return;
     setLoading(true);
     setError('');
     try {
@@ -217,6 +227,23 @@ export default function App() {
       setGraphDoc(next);
       setTrail((previous) => previous.slice(0, index + 1));
       setSelectedConceptId(next.data.rootConcept || next.data.nodes[0]?.concept || null);
+      setDirtyGraph(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function openSearchResult(entry) {
+    if (!project || !entry || blockDirtyGraphNavigation()) return;
+    setLoading(true);
+    setError('');
+    try {
+      const next = await fetchGraph(project, entry.primaryGraph);
+      setGraphDoc(next);
+      setTrail([{ id: next.data.id, title: next.data.title }]);
+      setSelectedConceptId(entry.id);
       setDirtyGraph(false);
     } catch (err) {
       setError(err.message);
@@ -358,11 +385,13 @@ export default function App() {
     setLoading(true);
     setError('');
     try {
-      const [freshState, freshGraph] = await Promise.all([
+      const [freshState, freshIndex, freshGraph] = await Promise.all([
         readJson(connection, project.statePath),
+        readJson(connection, project.indexPath),
         fetchGraph(project, graphDoc.data.id),
       ]);
       setStateDoc(freshState);
+      setProjectIndex(freshIndex.data);
       setGraphDoc(freshGraph);
       setSelectedConceptId(freshGraph.data.rootConcept || freshGraph.data.nodes[0]?.concept || null);
       setDirtyGraph(false);
@@ -376,15 +405,37 @@ export default function App() {
     }
   }
 
+  function closeProject() {
+    if (dirtyGraph || dirtyState) {
+      setError('Save or refresh your changes before returning to the project list.');
+      return;
+    }
+    setProject(null);
+    setProjectRef(null);
+    setProjectIndex(null);
+    setGraphDoc(null);
+    setStateDoc(null);
+    setConcepts({});
+    setSelectedConceptId(null);
+    setTrail([]);
+    setError('');
+  }
+
   async function disconnect() {
+    if (dirtyGraph || dirtyState) {
+      setError('Save or refresh your changes before disconnecting this browser.');
+      return;
+    }
     await clearConnection();
     setConnection(null);
     setManifest(null);
     setProject(null);
     setProjectRef(null);
+    setProjectIndex(null);
     setGraphDoc(null);
     setStateDoc(null);
     setConcepts({});
+    setSelectedConceptId(null);
     setTrail([]);
   }
 
@@ -417,9 +468,9 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <button className="brand-button" type="button" onClick={() => setProject(null)} title="All projects">LM</button>
+        <button className="brand-button" type="button" onClick={closeProject} title="All projects">LM</button>
         <div className="breadcrumbs" aria-label="Graph path">
-          <button type="button" onClick={() => setProject(null)}>{projectTitle}</button>
+          <button type="button" onClick={closeProject}>{projectTitle}</button>
           {trail.map((item, index) => (
             <span key={`${item.id}-${index}`}>
               <span className="crumb-separator">›</span>
@@ -429,6 +480,7 @@ export default function App() {
             </span>
           ))}
         </div>
+        <ProjectSearch index={projectIndex} onSelect={openSearchResult} disabled={loading || saving} />
         <div className="topbar-actions">
           <span className={`sync-state ${unsaved ? 'dirty' : ''}`}>{statusText}</span>
           <button className="ghost-button" type="button" onClick={refreshCurrent} disabled={loading || saving}>Refresh</button>
