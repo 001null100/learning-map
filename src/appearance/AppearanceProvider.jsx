@@ -58,6 +58,9 @@ export function AppearanceProvider({ children }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
 
+  const updateAppearance = (key, value) => setAppearance((current) => ({ ...current, [key]: value }));
+  const resetAppearance = () => setAppearance(DEFAULT_APPEARANCE);
+
   useEffect(() => {
     applyRootAttributes(appearance, focusMode);
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(appearance)); } catch { /* local preference persistence is optional */ }
@@ -105,8 +108,8 @@ export function AppearanceProvider({ children }) {
   const value = useMemo(() => ({
     appearance,
     setAppearance,
-    updateAppearance: (key, value) => setAppearance((current) => ({ ...current, [key]: value })),
-    resetAppearance: () => setAppearance(DEFAULT_APPEARANCE),
+    updateAppearance,
+    resetAppearance,
     settingsOpen,
     setSettingsOpen,
     focusMode,
@@ -120,7 +123,7 @@ export function AppearanceProvider({ children }) {
         <button
           type="button"
           className={focusMode ? 'active' : ''}
-          onClick={() => setFocusMode((value) => !value)}
+          onClick={() => setFocusMode((current) => !current)}
           title="Focus mode (F)"
         >
           <span aria-hidden="true">⌗</span><em>Focus</em>
@@ -134,7 +137,13 @@ export function AppearanceProvider({ children }) {
           <span aria-hidden="true">⚙</span><em>Style</em>
         </button>
       </div>
-      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsPanel
+        open={settingsOpen}
+        appearance={appearance}
+        updateAppearance={updateAppearance}
+        resetAppearance={resetAppearance}
+        onClose={() => setSettingsOpen(false)}
+      />
     </AppearanceContext.Provider>
   );
 }
