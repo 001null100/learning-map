@@ -10,19 +10,26 @@ import {
   useNodesState,
 } from '@xyflow/react';
 import ConceptNode from './ConceptNode.jsx';
+import { useAppearance } from '../appearance/AppearanceProvider.jsx';
 
 const nodeTypes = { concept: ConceptNode };
 const NODE_WIDTH = 230;
 const NODE_HEIGHT = 112;
 
 const FAMILY_STYLE = {
-  flow: { stroke: '#63758d', marker: '#8393aa' },
-  structure: { stroke: '#8f82bd', marker: '#a99bd4' },
-  dependency: { stroke: '#b99b62', marker: '#ceb276', dash: '7 5' },
-  execution: { stroke: '#67a7da', marker: '#82bce8' },
-  data: { stroke: '#63ad9e', marker: '#7dc5b6' },
-  comparison: { stroke: '#bd7d92', marker: '#d394a9', dash: '4 4' },
-  evidence: { stroke: '#8792a1', marker: '#a2acb9', dash: '2 5' },
+  flow: { stroke: 'var(--edge-flow)', marker: 'var(--edge-flow)' },
+  structure: { stroke: 'var(--edge-structure)', marker: 'var(--edge-structure)' },
+  dependency: { stroke: 'var(--edge-dependency)', marker: 'var(--edge-dependency)', dash: '7 5' },
+  execution: { stroke: 'var(--edge-execution)', marker: 'var(--edge-execution)' },
+  data: { stroke: 'var(--edge-data)', marker: 'var(--edge-data)' },
+  comparison: { stroke: 'var(--edge-comparison)', marker: 'var(--edge-comparison)', dash: '4 4' },
+  evidence: { stroke: 'var(--edge-evidence)', marker: 'var(--edge-evidence)', dash: '2 5' },
+};
+
+const BACKGROUND_VARIANTS = {
+  dots: BackgroundVariant.Dots,
+  grid: BackgroundVariant.Lines,
+  cross: BackgroundVariant.Cross,
 };
 
 function intersects(layers, visibleLayers) {
@@ -64,6 +71,7 @@ export default function GraphCanvas({
   onMoveNode,
   onOpenSource,
 }) {
+  const { appearance } = useAppearance();
   const visibleGraphNodes = useMemo(() => {
     if (!graph) return [];
     return graph.nodes.filter((node) => intersects(node.layers, visibleLayers));
@@ -120,6 +128,7 @@ export default function GraphCanvas({
         const handles = chooseHandles(nodeLookup.get(edge.source), nodeLookup.get(edge.target));
         const family = edge.family || 'flow';
         const familyStyle = FAMILY_STYLE[family] || FAMILY_STYLE.flow;
+        const animated = appearance.edgeMotion && ['flow', 'execution', 'data'].includes(family);
         return {
           id: edge.id,
           source: edge.source,
@@ -128,14 +137,15 @@ export default function GraphCanvas({
           targetHandle: handles.targetHandle,
           type: 'smoothstep',
           pathOptions: { offset: 30, borderRadius: 16 },
+          animated,
           label: edge.label || undefined,
           labelShowBg: Boolean(edge.label),
           labelBgPadding: [8, 5],
-          labelBgBorderRadius: 6,
-          labelStyle: { fill: '#c0cad8', fontSize: 10, fontWeight: 600 },
+          labelBgBorderRadius: 7,
+          labelStyle: { fill: 'var(--text)', fontSize: 10, fontWeight: 620 },
           labelBgStyle: {
-            fill: '#0d131b',
-            fillOpacity: 0.98,
+            fill: 'var(--panel)',
+            fillOpacity: 0.96,
             stroke: familyStyle.stroke,
             strokeWidth: 0.7,
           },
@@ -143,7 +153,7 @@ export default function GraphCanvas({
           style: {
             stroke: familyStyle.stroke,
             strokeWidth: family === 'execution' || family === 'data' ? 1.8 : 1.5,
-            strokeDasharray: familyStyle.dash,
+            strokeDasharray: animated ? undefined : familyStyle.dash,
           },
           markerEnd: {
             type: MarkerType.ArrowClosed,
@@ -158,13 +168,15 @@ export default function GraphCanvas({
           },
         };
       });
-  }, [graph, visibleGraphNodes, visibleLayers]);
+  }, [graph, visibleGraphNodes, visibleLayers, appearance.edgeMotion]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(makeNodes());
   const [edges, setEdges, onEdgesChange] = useEdgesState(makeEdges());
 
   useEffect(() => setNodes(makeNodes()), [makeNodes, setNodes]);
   useEffect(() => setEdges(makeEdges()), [makeEdges, setEdges]);
+
+  const backgroundVariant = BACKGROUND_VARIANTS[appearance.graphPattern] || BackgroundVariant.Dots;
 
   return (
     <ReactFlow
@@ -190,8 +202,10 @@ export default function GraphCanvas({
       onlyRenderVisibleElements
       proOptions={{ hideAttribution: false }}
     >
-      <Background variant={BackgroundVariant.Dots} gap={24} size={1} />
-      <MiniMap pannable zoomable />
+      {appearance.graphPattern !== 'none' && (
+        <Background variant={backgroundVariant} gap={24} size={appearance.graphPattern === 'cross' ? 1.4 : 1} color="var(--graph-grid)" />
+      )}
+      {appearance.showMinimap && <MiniMap pannable zoomable />}
       <Controls showInteractive={false} />
     </ReactFlow>
   );
