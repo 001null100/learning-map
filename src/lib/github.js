@@ -29,13 +29,22 @@ async function request(connection, url, options = {}) {
   return response.json();
 }
 
-function contentUrl(connection, path = '') {
-  const safePath = path
+function encodePath(path = '') {
+  return path
     .split('/')
     .filter(Boolean)
     .map(encodeURIComponent)
     .join('/');
-  return `/repos/${encodeURIComponent(connection.owner)}/${encodeURIComponent(connection.repo)}/contents/${safePath}`;
+}
+
+function contentUrl(connection, path = '') {
+  return `/repos/${encodeURIComponent(connection.owner)}/${encodeURIComponent(connection.repo)}/contents/${encodePath(path)}`;
+}
+
+function repositoryContentUrl(repositoryFullName, path = '', ref = null) {
+  const [owner, repo] = repositoryFullName.split('/');
+  const base = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodePath(path)}`;
+  return ref ? `${base}?ref=${encodeURIComponent(ref)}` : base;
 }
 
 function decodeBase64(value) {
@@ -54,6 +63,17 @@ function encodeBase64(value) {
   return btoa(binary);
 }
 
+function decodeContentResult(result, path) {
+  if (Array.isArray(result) || result.type !== 'file' || !result.content) {
+    throw new Error(`Expected a file at ${path}`);
+  }
+  return {
+    path,
+    sha: result.sha,
+    text: decodeBase64(result.content),
+  };
+}
+
 export async function testConnection(connection) {
   return request(
     connection,
@@ -63,14 +83,12 @@ export async function testConnection(connection) {
 
 export async function readFile(connection, path) {
   const result = await request(connection, contentUrl(connection, path));
-  if (Array.isArray(result) || result.type !== 'file' || !result.content) {
-    throw new Error(`Expected a file at ${path}`);
-  }
-  return {
-    path,
-    sha: result.sha,
-    text: decodeBase64(result.content),
-  };
+  return decodeContentResult(result, path);
+}
+
+export async function readRepositoryFile(connection, repositoryFullName, path, ref = null) {
+  const result = await request(connection, repositoryContentUrl(repositoryFullName, path, ref));
+  return decodeContentResult(result, `${repositoryFullName}:${path}`);
 }
 
 export async function readJson(connection, path) {
