@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 
 const EXPOSURE = [['unseen', 'Unseen'], ['seen', 'Seen'], ['studied', 'Studied']];
@@ -24,6 +25,36 @@ function SelectAxis({ label, value, options, onChange }) {
   );
 }
 
+function CheckCard({ check, attempts, onSubmitPrediction, emphasized = false }) {
+  const latest = attempts.at(-1);
+
+  function submit(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const response = new FormData(form).get('response')?.toString().trim();
+    if (!response) return;
+    onSubmitPrediction(check, response);
+    form.reset();
+  }
+
+  return (
+    <div className={`learning-check ${emphasized ? 'is-gate' : ''}`}>
+      <div className="check-head">
+        <span>{check.type}</span>
+        {latest && <em className={`outcome outcome-${latest.outcome}`}>{latest.outcome}</em>}
+      </div>
+      <p>{check.prompt}</p>
+      {latest && <blockquote>{latest.response}</blockquote>}
+      {latest?.reflection && <div className="check-reflection">{latest.reflection}</div>}
+      {latest && check.reviewNotes && <div className="check-review-notes"><strong>Review:</strong> {check.reviewNotes}</div>}
+      <form className="quick-form" onSubmit={submit}>
+        <textarea name="response" rows="3" placeholder={latest ? 'Try again with a better mental model…' : 'Commit to an answer before reading further…'} />
+        <button type="submit">{latest ? 'Record another attempt' : 'Record answer'}</button>
+      </form>
+    </div>
+  );
+}
+
 export default function ConceptPanel({
   concept,
   conceptIndex,
@@ -35,10 +66,15 @@ export default function ConceptPanel({
   onSetLearning,
   onAddAnnotation,
   onSetAnnotationStatus,
+  onSetAnnotationResolution,
   onSubmitPrediction,
   onPinConcept,
   onOpenSource,
 }) {
+  const [revealExplanation, setRevealExplanation] = useState(false);
+
+  useEffect(() => setRevealExplanation(false), [concept?.id]);
+
   if (!concept) {
     return (
       <aside className="concept-panel empty-panel">
@@ -50,7 +86,20 @@ export default function ConceptPanel({
   const learning = learningState.learning?.[concept.id] || { exposure: 'unseen', confidence: 'low', verification: 'untested' };
   const annotations = (learningState.annotations || []).filter((item) => item.targetType === 'concept' && item.targetId === concept.id);
   const predictions = (learningState.predictions || []).filter((item) => item.conceptId === concept.id);
-  const indexMap = new Map((conceptIndex?.concepts || []).map((entry) => [entry.id, entry]));
+  const indexMap = useMemo(() => new Map((conceptIndex?.concepts || []).map((entry) => [entry.id, entry])), [conceptIndex]);
+  const attemptsByCheck = useMemo(() => {
+    const map = new Map();
+    for (const prediction of predictions) {
+      if (!map.has(prediction.checkId)) map.set(prediction.checkId, []);
+      map.get(prediction.checkId).push(prediction);
+    }
+    return map;
+  }, [predictions]);
+  const unansweredPrediction = (concept.checks || []).find(
+    (check) => check.type === 'predict' && !(attemptsByCheck.get(check.id)?.length),
+  );
+  const explanationLocked = Boolean(unansweredPrediction && !revealExplanation);
+  const pinned = Boolean(activeWorkspace?.conceptIds?.includes(concept.id));
 
   function submitAnnotation(event) {
     event.preventDefault();
@@ -63,15 +112,6 @@ export default function ConceptPanel({
     form.reset();
   }
 
-  function submitCheck(event, check) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const response = new FormData(form).get('response')?.toString().trim();
-    if (!response) return;
-    onSubmitPrediction(check, response);
-    form.reset();
-  }
-
   return (
     <aside className="concept-panel">
       <div className="concept-panel-scroll">
@@ -80,9 +120,18 @@ export default function ConceptPanel({
             <div className="panel-eyebrow">{concept.kind || 'concept'}</div>
             <h2>{concept.title}</h2>
           </div>
-          <button className="pin-button" type="button" onClick={() => onPinConcept(concept.id)} title="Pin to active investigation workspace">＋ Pin</button>
+          <button className={`pin-button ${pinned ? 'is-pinned' : ''}`} type="button" onClick={() => onPinConcept(concept.id)} title="Pin to active investigation workspace">
+            {pinned ? '✓ Pinned' : '＋ Pin'}
+          </button>
         </div>
         <p className="concept-summary">{concept.summary}</p>
+
+        {((concept.tags || []).length > 0 || (concept.aliases || []).length > 0) && (
+          <div className="concept-meta-chips">
+            {(concept.tags || []).slice(0, 6).map((tag) => <span key={`tag-${tag}`}>#{tag}</span>)}
+            {(concept.aliases || []).slice(0, 3).map((alias) => <span className="alias-chip" key={`alias-${alias}`}>{alias}</span>)}
+          </div>
+        )}
 
         <div className="learning-grid">
           <SelectAxis label="Exposure" value={learning.exposure} options={EXPOSURE} onChange={(value) => onSetLearning(concept.id, 'exposure', value)} />
@@ -95,46 +144,58 @@ export default function ConceptPanel({
           <button className="primary-button dive-button" type="button" onClick={() => onDive(concept.detailGraph, concept.title)}>Dive deeper ↘</button>
         )}
 
-        <div className="markdown-body"><ReactMarkdown>{concept.body}</ReactMarkdown></div>
-
-        <section className="panel-section provenance-section">
-          <div className="section-title-row"><h3>Grounding</h3><span className={`confidence-pill confidence-${concept.provenance?.confidence || 'medium'}`}>{concept.provenance?.confidence || 'medium'}</span></div>
-          <p><strong>{concept.provenance?.basis || 'unknown'}</strong>{concept.provenance?.note ? ` · ${concept.provenance.note}` : ''}</p>
-          {(concept.evidence || []).length > 0 ? (
-            <div className="source-list">
-              {concept.evidence.map((source) => (
-                <button key={source.id} type="button" onClick={() => onOpenSource(source)}>
-                  <span>{source.type === 'code' ? '⌘' : '↗'}</span>
-                  <span><strong>{source.symbol || source.title || source.path || source.type}</strong><small>{source.claim}</small></span>
-                </button>
-              ))}
+        {explanationLocked && (
+          <section className="prediction-gate">
+            <div className="prediction-gate-head">
+              <div>
+                <p className="panel-eyebrow">Predict first</p>
+                <h3>Commit before revealing the explanation</h3>
+              </div>
+              <button className="ghost-button" type="button" onClick={() => setRevealExplanation(true)}>Reveal anyway</button>
             </div>
-          ) : <small className="muted-note">No structured source anchors on this concept.</small>}
-        </section>
-
-        {(concept.checks || []).length > 0 && (
-          <section className="panel-section checks-section">
-            <h3>Learning checks</h3>
-            {concept.checks.map((check) => {
-              const attempts = predictions.filter((item) => item.checkId === check.id);
-              const latest = attempts.at(-1);
-              return (
-                <div className="learning-check" key={check.id}>
-                  <div className="check-head"><span>{check.type}</span>{latest && <em className={`outcome outcome-${latest.outcome}`}>{latest.outcome}</em>}</div>
-                  <p>{check.prompt}</p>
-                  {latest && <blockquote>{latest.response}</blockquote>}
-                  {latest?.reflection && <div className="check-reflection">{latest.reflection}</div>}
-                  <form className="quick-form" onSubmit={(event) => submitCheck(event, check)}>
-                    <textarea name="response" rows="3" placeholder="Commit to an answer before opening more explanation…" />
-                    <button type="submit">Record answer</button>
-                  </form>
-                </div>
-              );
-            })}
+            <CheckCard
+              check={unansweredPrediction}
+              attempts={attemptsByCheck.get(unansweredPrediction.id) || []}
+              onSubmitPrediction={onSubmitPrediction}
+              emphasized
+            />
           </section>
         )}
 
-        {(concept.related || []).length > 0 && (
+        {!explanationLocked && <div className="markdown-body"><ReactMarkdown>{concept.body}</ReactMarkdown></div>}
+
+        {!explanationLocked && (
+          <section className="panel-section provenance-section">
+            <div className="section-title-row"><h3>Grounding</h3><span className={`confidence-pill confidence-${concept.provenance?.confidence || 'medium'}`}>{concept.provenance?.confidence || 'medium'}</span></div>
+            <p><strong>{concept.provenance?.basis || 'unknown'}</strong>{concept.provenance?.note ? ` · ${concept.provenance.note}` : ''}</p>
+            {(concept.evidence || []).length > 0 ? (
+              <div className="source-list">
+                {concept.evidence.map((source) => (
+                  <button key={source.id} type="button" onClick={() => onOpenSource(source)}>
+                    <span>{source.type === 'code' ? '⌘' : '↗'}</span>
+                    <span><strong>{source.symbol || source.title || source.path || source.type}</strong><small>{source.claim}</small></span>
+                  </button>
+                ))}
+              </div>
+            ) : <small className="muted-note">No structured source anchors on this concept.</small>}
+          </section>
+        )}
+
+        {!explanationLocked && (concept.checks || []).length > 0 && (
+          <section className="panel-section checks-section">
+            <h3>Learning checks</h3>
+            {concept.checks.map((check) => (
+              <CheckCard
+                key={check.id}
+                check={check}
+                attempts={attemptsByCheck.get(check.id) || []}
+                onSubmitPrediction={onSubmitPrediction}
+              />
+            ))}
+          </section>
+        )}
+
+        {!explanationLocked && (concept.related || []).length > 0 && (
           <section className="panel-section">
             <h3>Related concepts</h3>
             <div className="related-list">
@@ -155,15 +216,25 @@ export default function ConceptPanel({
                 <div className={`annotation annotation-${item.type}`} key={item.id}>
                   <div className="annotation-head"><span>{item.type}</span><small>{item.status}</small></div>
                   <p>{item.text}</p>
-                  {item.resolution && <div className="annotation-resolution">Resolved: {item.resolution}</div>}
-                  <select value={item.status} onChange={(event) => onSetAnnotationStatus(item.id, event.target.value)}>
-                    <option value="open">Open</option>
-                    <option value="answered">Answered</option>
-                    <option value="needs-testing">Needs testing</option>
-                    <option value="resolved">Resolved</option>
-                    <option value="accepted">Accepted</option>
-                    <option value="rejected">Rejected</option>
-                  </select>
+                  {item.resolution && <div className="annotation-resolution">Resolution: {item.resolution}</div>}
+                  <div className="annotation-controls">
+                    <select value={item.status} onChange={(event) => onSetAnnotationStatus(item.id, event.target.value)}>
+                      <option value="open">Open</option>
+                      <option value="answered">Answered</option>
+                      <option value="needs-testing">Needs testing</option>
+                      <option value="resolved">Resolved</option>
+                      <option value="accepted">Accepted</option>
+                      <option value="rejected">Rejected</option>
+                    </select>
+                    <form onSubmit={(event) => {
+                      event.preventDefault();
+                      const value = new FormData(event.currentTarget).get('resolution')?.toString().trim() || '';
+                      onSetAnnotationResolution(item.id, value);
+                    }}>
+                      <input name="resolution" defaultValue={item.resolution || ''} placeholder="Resolution / corrected model" />
+                      <button type="submit">Set</button>
+                    </form>
+                  </div>
                 </div>
               ))}
             </div>
