@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import SettingsPanel from './SettingsPanel.jsx';
+import AppearanceDrawer from './AppearanceDrawer.jsx';
 
 const STORAGE_KEY = 'learning-map-appearance-v1';
 
@@ -137,7 +137,7 @@ export function AppearanceProvider({ children }) {
           <span aria-hidden="true">⚙</span><em>Style</em>
         </button>
       </div>
-      <SettingsPanel
+      <AppearanceDrawer
         open={settingsOpen}
         appearance={appearance}
         updateAppearance={updateAppearance}
