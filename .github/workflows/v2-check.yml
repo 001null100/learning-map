@@ -22,3 +22,5 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Build
         run: npm run build
+
+# Temporary staging-only workflow. Remove before merging v2 to main.
