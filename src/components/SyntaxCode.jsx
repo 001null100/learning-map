@@ -84,6 +84,7 @@ export default function SyntaxCode({ lines, language, path }) {
       className={`source-excerpt live-source syntax-code syntax-theme-${codeTheme}`}
       aria-busy={Boolean(shikiLanguage && !tokenLines && !failed)}
       data-language={shikiLanguage || 'plain'}
+      data-theme={codeTheme}
     >
       <code>
         {tokenLines
