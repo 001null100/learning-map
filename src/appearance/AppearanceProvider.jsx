@@ -7,6 +7,7 @@ export const DEFAULT_APPEARANCE = {
   theme: 'midnight',
   accent: 'theme',
   density: 'comfortable',
+  interfaceScale: '100',
   motion: 'system',
   ambientGlow: true,
   pointerGlow: true,
@@ -41,6 +42,7 @@ function applyRootAttributes(appearance, focusMode) {
   root.dataset.lmTheme = appearance.theme;
   root.dataset.lmAccent = appearance.accent;
   root.dataset.lmDensity = appearance.density;
+  root.dataset.lmScale = appearance.interfaceScale || '100';
   root.dataset.lmMotion = appearance.motion;
   root.dataset.lmGlass = appearance.glass ? 'on' : 'off';
   root.dataset.lmAmbient = appearance.ambientGlow ? 'on' : 'off';
