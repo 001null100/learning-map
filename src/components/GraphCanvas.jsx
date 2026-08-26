@@ -16,6 +16,13 @@ const nodeTypes = { concept: ConceptNode };
 const NODE_WIDTH = 230;
 const NODE_HEIGHT = 112;
 
+// Stored graph coordinates remain the authoring source of truth. The canvas expands
+// them at render time so older/manual layouts gain breathing room without rewriting
+// every graph. Labeled-edge graphs get extra room because their midpoint text needs
+// a substantially clearer corridor than an unlabeled arrow.
+const NORMAL_LAYOUT_SCALE = { x: 1.18, y: 1.16 };
+const LABELED_LAYOUT_SCALE = { x: 1.34, y: 1.28 };
+
 const FAMILY_STYLE = {
   flow: { stroke: 'var(--edge-flow)', marker: 'var(--edge-flow)' },
   structure: { stroke: 'var(--edge-structure)', marker: 'var(--edge-structure)' },
@@ -36,6 +43,20 @@ function intersects(layers, visibleLayers) {
   if (!layers?.length) return true;
   if (!visibleLayers?.size) return true;
   return layers.some((layer) => visibleLayers.has(layer));
+}
+
+function scalePosition(position, scale) {
+  return {
+    x: (position?.x || 0) * scale.x,
+    y: (position?.y || 0) * scale.y,
+  };
+}
+
+function unscalePosition(position, scale) {
+  return {
+    x: (position?.x || 0) / scale.x,
+    y: (position?.y || 0) / scale.y,
+  };
 }
 
 function chooseHandles(sourceNode, targetNode) {
@@ -72,6 +93,11 @@ export default function GraphCanvas({
   onOpenSource,
 }) {
   const { appearance } = useAppearance();
+  const displayScale = useMemo(() => {
+    const hasLabeledEdges = Boolean(graph?.edges?.some((edge) => edge.label));
+    return hasLabeledEdges ? LABELED_LAYOUT_SCALE : NORMAL_LAYOUT_SCALE;
+  }, [graph]);
+
   const visibleGraphNodes = useMemo(() => {
     if (!graph) return [];
     return graph.nodes.filter((node) => intersects(node.layers, visibleLayers));
@@ -97,7 +123,7 @@ export default function GraphCanvas({
       return {
         id: node.id,
         type: 'concept',
-        position: node.position,
+        position: scalePosition(node.position, displayScale),
         data: {
           conceptId: node.concept,
           label: node.labelOverride || concept.title || node.concept,
@@ -115,11 +141,14 @@ export default function GraphCanvas({
         },
       };
     });
-  }, [visibleGraphNodes, concepts, learningState, graph?.id]);
+  }, [visibleGraphNodes, concepts, learningState, graph?.id, displayScale]);
 
   const makeEdges = useMemo(() => () => {
     if (!graph) return [];
-    const nodeLookup = new Map(graph.nodes.map((node) => [node.id, node]));
+    const nodeLookup = new Map(graph.nodes.map((node) => [
+      node.id,
+      { ...node, position: scalePosition(node.position, displayScale) },
+    ]));
     const visibleNodeIds = new Set(visibleGraphNodes.map((node) => node.id));
 
     return graph.edges
@@ -130,6 +159,7 @@ export default function GraphCanvas({
         const family = edge.family || 'flow';
         const familyStyle = FAMILY_STYLE[family] || FAMILY_STYLE.flow;
         const animated = appearance.edgeMotion && ['flow', 'execution', 'data'].includes(family);
+        const hasLabel = Boolean(edge.label);
         return {
           id: edge.id,
           source: edge.source,
@@ -137,10 +167,10 @@ export default function GraphCanvas({
           sourceHandle: handles.sourceHandle,
           targetHandle: handles.targetHandle,
           type: 'smoothstep',
-          pathOptions: { offset: 30, borderRadius: 16 },
+          pathOptions: { offset: hasLabel ? 44 : 30, borderRadius: hasLabel ? 20 : 16 },
           animated,
           label: edge.label || undefined,
-          labelShowBg: Boolean(edge.label),
+          labelShowBg: hasLabel,
           labelBgPadding: [8, 5],
           labelBgBorderRadius: 7,
           labelStyle: { fill: 'var(--text)', fontSize: 10, fontWeight: 620 },
@@ -169,7 +199,7 @@ export default function GraphCanvas({
           },
         };
       });
-  }, [graph, visibleGraphNodes, visibleLayers, appearance.edgeMotion]);
+  }, [graph, visibleGraphNodes, visibleLayers, appearance.edgeMotion, displayScale]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(makeNodes());
   const [edges, setEdges, onEdgesChange] = useEdgesState(makeEdges());
@@ -194,9 +224,9 @@ export default function GraphCanvas({
         const source = edge.data?.evidence?.[0];
         if (source && onOpenSource) onOpenSource(source);
       }}
-      onNodeDragStop={(_, node) => onMoveNode(node.id, node.position)}
+      onNodeDragStop={(_, node) => onMoveNode(node.id, unscalePosition(node.position, displayScale))}
       fitView
-      fitViewOptions={{ padding: 0.22, maxZoom: 1.08 }}
+      fitViewOptions={{ padding: 0.28, maxZoom: 1.04 }}
       minZoom={0.2}
       maxZoom={2.4}
       deleteKeyCode={null}
