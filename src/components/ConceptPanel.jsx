@@ -25,8 +25,30 @@ function SelectAxis({ label, value, options, onChange }) {
   );
 }
 
+function SourceButtons({ sources, onOpenSource }) {
+  if (!sources.length) return null;
+  return (
+    <div className="source-list">
+      {sources.map((source) => (
+        <button key={source.id} type="button" onClick={() => onOpenSource(source)}>
+          <span>{source.type === 'code' ? '⌘' : '↗'}</span>
+          <span>
+            <strong>{source.symbol || source.title || source.path || source.type}</strong>
+            <small>{source.claim}</small>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function CheckCard({ check, attempts, onSubmitPrediction, emphasized = false }) {
   const latest = attempts.at(-1);
+  const firstPlaceholder = check.type === 'predict'
+    ? 'Commit to a prediction before reading further…'
+    : check.type === 'apply'
+      ? 'Work through the application…'
+      : 'Explain it in your own words, citing the implementation where useful…';
 
   function submit(event) {
     event.preventDefault();
@@ -48,7 +70,7 @@ function CheckCard({ check, attempts, onSubmitPrediction, emphasized = false }) 
       {latest?.reflection && <div className="check-reflection">{latest.reflection}</div>}
       {latest && check.reviewNotes && <div className="check-review-notes"><strong>Review:</strong> {check.reviewNotes}</div>}
       <form className="quick-form" onSubmit={submit}>
-        <textarea name="response" rows="3" placeholder={latest ? 'Try again with a better mental model…' : 'Commit to an answer before reading further…'} />
+        <textarea name="response" rows="3" placeholder={latest ? 'Try again with a better mental model…' : firstPlaceholder} />
         <button type="submit">{latest ? 'Record another attempt' : 'Record answer'}</button>
       </form>
     </div>
@@ -86,6 +108,8 @@ export default function ConceptPanel({
   const learning = learningState.learning?.[concept.id] || { exposure: 'unseen', confidence: 'low', verification: 'untested' };
   const annotations = (learningState.annotations || []).filter((item) => item.targetType === 'concept' && item.targetId === concept.id);
   const predictions = (learningState.predictions || []).filter((item) => item.conceptId === concept.id);
+  const implementationSources = (concept.evidence || []).filter((source) => source.type === 'code');
+  const supportingSources = (concept.evidence || []).filter((source) => source.type !== 'code');
   const indexMap = useMemo(() => new Map((conceptIndex?.concepts || []).map((entry) => [entry.id, entry])), [conceptIndex]);
   const attemptsByCheck = useMemo(() => {
     const map = new Map();
@@ -145,6 +169,17 @@ export default function ConceptPanel({
           <button className="primary-button dive-button" type="button" onClick={() => onDive(concept.detailGraph, concept.title)}>Dive deeper ↘</button>
         )}
 
+        {implementationSources.length > 0 && (
+          <section className="panel-section implementation-section">
+            <div className="section-title-row">
+              <h3>Implementation</h3>
+              <small>{implementationSources.length} source{implementationSources.length === 1 ? '' : 's'}</small>
+            </div>
+            <p className="implementation-hint">Read the cited implementation directly. Uploaded snapshots are embedded; repository-backed sources can load live.</p>
+            <SourceButtons sources={implementationSources} onOpenSource={onOpenSource} />
+          </section>
+        )}
+
         {explanationLocked && (
           <section className="prediction-gate">
             <div className="prediction-gate-head">
@@ -169,16 +204,11 @@ export default function ConceptPanel({
           <section className="panel-section provenance-section">
             <div className="section-title-row"><h3>Grounding</h3><span className={`confidence-pill confidence-${concept.provenance?.confidence || 'medium'}`}>{concept.provenance?.confidence || 'medium'}</span></div>
             <p><strong>{concept.provenance?.basis || 'unknown'}</strong>{concept.provenance?.note ? ` · ${concept.provenance.note}` : ''}</p>
-            {(concept.evidence || []).length > 0 ? (
-              <div className="source-list">
-                {concept.evidence.map((source) => (
-                  <button key={source.id} type="button" onClick={() => onOpenSource(source)}>
-                    <span>{source.type === 'code' ? '⌘' : '↗'}</span>
-                    <span><strong>{source.symbol || source.title || source.path || source.type}</strong><small>{source.claim}</small></span>
-                  </button>
-                ))}
-              </div>
-            ) : <small className="muted-note">No structured source anchors on this concept.</small>}
+            {supportingSources.length > 0
+              ? <SourceButtons sources={supportingSources} onOpenSource={onOpenSource} />
+              : implementationSources.length > 0
+                ? <small className="muted-note">Implementation grounding is shown above.</small>
+                : <small className="muted-note">No structured source anchors on this concept.</small>}
           </section>
         )}
 
