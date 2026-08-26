@@ -42,7 +42,7 @@ function tokenStyle(token) {
 
 function PlainLines({ lines }) {
   return lines.map((line) => (
-    <span className="source-line" key={line.number}>
+    <span className="source-line" style={{ display: 'inline-flex' }} key={line.number}>
       <b>{line.number}</b><span className="syntax-line">{line.text || ' '}</span>{'\n'}
     </span>
   ));
@@ -89,7 +89,7 @@ export default function SyntaxCode({ lines, language, path }) {
       <code>
         {tokenLines
           ? lines.map((line, lineIndex) => (
-              <span className="source-line" key={line.number}>
+              <span className="source-line" style={{ display: 'inline-flex' }} key={line.number}>
                 <b>{line.number}</b>
                 <span className="syntax-line">
                   {(tokenLines[lineIndex] || []).map((token, tokenIndex) => (
