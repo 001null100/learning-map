@@ -148,6 +148,7 @@ body {
 }
 .source-access span { color: var(--muted); }
 .source-access-embedded-code strong,
+.source-access-local-code strong,
 .source-access-live-code strong,
 .source-access-embedded strong {
   color: var(--good);
@@ -204,10 +205,67 @@ body {
   border-color: color-mix(in srgb, var(--warn) 34%, var(--border));
   background: color-mix(in srgb, var(--warn) 6%, var(--panel-2));
 }
+
+.source-attach-panel {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  gap: 18px;
+  align-items: center;
+  margin: 14px 0;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--warn) 28%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warn) 5%, var(--panel-2));
+}
+.source-attach-panel strong {
+  display: block;
+  margin-bottom: 5px;
+  font-size: calc(12px * var(--lm-interface-scale));
+}
+.source-attach-panel p {
+  margin: 0;
+  color: var(--muted);
+  font-size: calc(11px * var(--lm-interface-scale));
+  line-height: 1.55;
+}
+.source-attach-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 44%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-2) 8%, var(--panel-3));
+  color: var(--text);
+  cursor: pointer;
+  font-size: calc(11px * var(--lm-interface-scale));
+  font-weight: 700;
+  white-space: nowrap;
+}
+.source-attach-button:hover { border-color: color-mix(in srgb, var(--accent-2) 70%, var(--border)); }
+.source-attach-button input { display: none; }
+
 .source-drawer-actions a {
   font-size: calc(12px * var(--lm-interface-scale));
   font-weight: 700;
 }
+.source-action-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.source-action-group-right { justify-content: flex-end; }
+.source-detach-button {
+  border: 0;
+  background: transparent;
+  color: var(--lm-readable-faint);
+  padding: 4px 0;
+  cursor: pointer;
+  font-size: calc(10px * var(--lm-interface-scale));
+}
+.source-detach-button:hover { color: var(--danger); }
 
 /* Appearance panel itself should remain readable while configuring readability. */
 .settings-section-title h3 { font-size: calc(14px * var(--lm-interface-scale)); }
@@ -219,4 +277,6 @@ body {
 @media (max-width: 700px) {
   .source-drawer-backdrop { padding: 10px; }
   .source-drawer.source-inspector { width: calc(100vw - 20px); max-height: 90vh; }
+  .source-attach-panel { grid-template-columns: 1fr; }
+  .source-attach-button { justify-self: start; }
 }
