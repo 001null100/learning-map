@@ -80,7 +80,13 @@ export default function AppearanceDrawer({ open, appearance, updateAppearance, r
           </section>
 
           <section className="settings-section">
-            <div className="settings-section-title"><h3>Interface</h3><small>Spacing and surfaces</small></div>
+            <div className="settings-section-title"><h3>Interface</h3><small>Spacing and readability</small></div>
+            <Segment
+              label="Interface scale"
+              value={appearance.interfaceScale || '100'}
+              options={[["90", "90%"], ["100", "100%"], ["115", "115%"], ["130", "130%"]]}
+              onChange={(value) => updateAppearance('interfaceScale', value)}
+            />
             <Segment label="Density" value={appearance.density} options={[["comfortable", "Comfortable"], ["compact", "Compact"]]} onChange={(value) => updateAppearance('density', value)} />
             <Toggle checked={appearance.glass} onChange={(value) => updateAppearance('glass', value)} title="Glass surfaces" note="Adds gentle translucency and backdrop blur to chrome." />
           </section>
