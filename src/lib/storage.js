@@ -2,6 +2,7 @@ const DB_NAME = 'learning-map';
 const DB_VERSION = 1;
 const STORE = 'settings';
 const CONNECTION_KEY = 'github-connection';
+const SOURCE_SNAPSHOT_PREFIX = 'project-source:';
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -41,4 +42,16 @@ export function saveConnection(connection) {
 
 export function clearConnection() {
   return transact('readwrite', (store) => store.delete(CONNECTION_KEY));
+}
+
+export function getProjectSourceSnapshot(projectId) {
+  return transact('readonly', (store) => store.get(`${SOURCE_SNAPSHOT_PREFIX}${projectId}`));
+}
+
+export function saveProjectSourceSnapshot(projectId, snapshot) {
+  return transact('readwrite', (store) => store.put(snapshot, `${SOURCE_SNAPSHOT_PREFIX}${projectId}`));
+}
+
+export function clearProjectSourceSnapshot(projectId) {
+  return transact('readwrite', (store) => store.delete(`${SOURCE_SNAPSHOT_PREFIX}${projectId}`));
 }
