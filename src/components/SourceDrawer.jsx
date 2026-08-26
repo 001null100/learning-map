@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { readRepositoryFile } from '../lib/github.js';
+import {
+  clearProjectSourceSnapshot,
+  getProjectSourceSnapshot,
+  saveProjectSourceSnapshot,
+} from '../lib/storage.js';
+
+const TEXT_SOURCE_EXTENSIONS = new Set([
+  'h', 'hpp', 'hh', 'c', 'cc', 'cpp', 'cxx', 'cs', 'ini', 'json', 'txt', 'md', 'uproject', 'uplugin',
+]);
 
 function sourceUrl(source, project) {
   if (source.url) return source.url;
@@ -21,8 +30,8 @@ function lineSuffix(lines) {
   return `#L${lines.start}${lines.end && lines.end !== lines.start ? `-L${lines.end}` : ''}`;
 }
 
-function citationText(source, repository) {
-  if (source.type !== 'code') {
+function citationText(source, repository, effectiveCode) {
+  if (!effectiveCode) {
     if (source.path) return `${source.title || 'source'}:${source.path}${lineSuffix(source.lines)}`;
     return source.url || source.title || source.claim;
   }
@@ -36,7 +45,7 @@ function citationText(source, repository) {
 }
 
 function sliceLines(text, lines) {
-  if (!lines?.start) return null;
+  if (!text || !lines?.start) return null;
   const all = text.split(/\r?\n/);
   const start = Math.max(1, lines.start);
   const end = Math.min(all.length, lines.end || lines.start);
@@ -44,40 +53,73 @@ function sliceLines(text, lines) {
 }
 
 function excerptLines(source) {
-  if (source.type !== 'code' || !source.excerpt) return null;
+  if (!source.excerpt) return null;
   const all = source.excerpt.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
   const start = source.lines?.start || 1;
   return all.map((line, index) => ({ number: start + index, text: line }));
 }
 
-function accessInfo(source, repository) {
-  if (source.type === 'code' && source.excerpt) return { id: 'embedded-code', label: 'Readable code', detail: 'Exact cited lines are embedded in this learning map.' };
-  if (source.type === 'code' && repository) return { id: 'live-code', label: 'Live code', detail: 'The cited range can be loaded from the connected repository.' };
+function normalizeSourcePath(path) {
+  const normalized = (path || '').replace(/\\/g, '/').replace(/^\.\//, '');
+  const sourceIndex = normalized.indexOf('Source/');
+  return sourceIndex >= 0 ? normalized.slice(sourceIndex) : normalized;
+}
+
+function isTextSourceFile(file) {
+  const name = (file.name || '').toLowerCase();
+  const extension = name.includes('.') ? name.split('.').pop() : '';
+  return TEXT_SOURCE_EXTENSIONS.has(extension);
+}
+
+function accessInfo({ source, repository, effectiveCode, hasLocalSource }) {
+  if (effectiveCode && source.excerpt) return { id: 'embedded-code', label: 'Readable code', detail: 'Exact cited lines are embedded in this learning map.' };
+  if (effectiveCode && hasLocalSource) return { id: 'local-code', label: 'Attached source', detail: 'The cited lines are resolved from the source folder attached in this browser.' };
+  if (effectiveCode && repository) return { id: 'live-code', label: 'Live code', detail: 'The cited range can be loaded from the connected repository.' };
   if (source.url) return { id: 'external', label: 'External source', detail: 'This citation links to an external source.' };
   if (source.excerpt) return { id: 'embedded', label: 'Readable excerpt', detail: 'A source excerpt is embedded in this learning map.' };
-  return { id: 'citation-only', label: 'Citation only', detail: 'This older anchor stores metadata but no readable source content.' };
+  return { id: 'citation-only', label: 'Source not attached', detail: effectiveCode ? 'Attach the uploaded source folder once to resolve this path and line range.' : 'This anchor stores citation metadata but no readable source content.' };
 }
 
 export default function SourceDrawer({ source, project, connection, onClose }) {
   const [liveLines, setLiveLines] = useState(null);
+  const [localSnapshot, setLocalSnapshot] = useState(null);
+  const [snapshotLoading, setSnapshotLoading] = useState(true);
+  const [attaching, setAttaching] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [copied, setCopied] = useState(false);
   const repository = source.sourceId ? project.sourceRepositories?.find((item) => item.id === source.sourceId) : null;
-  const isCode = source.type === 'code';
+  const effectiveCode = source.type === 'code' || Boolean(source.path && source.language && (source.symbol || source.lines));
   const origin = source.origin || (repository ? 'repository' : 'uploaded');
   const url = sourceUrl(source, project);
-  const citation = useMemo(() => citationText(source, repository), [source, repository]);
+  const normalizedPath = normalizeSourcePath(source.path);
+  const localText = normalizedPath ? localSnapshot?.files?.[normalizedPath] : null;
+  const hasLocalSource = Boolean(localText);
+  const citation = useMemo(() => citationText(source, repository, effectiveCode), [source, repository, effectiveCode]);
   const embeddedLines = useMemo(() => excerptLines(source), [source]);
-  const displayedLines = liveLines || embeddedLines;
-  const access = useMemo(() => accessInfo(source, repository), [source, repository]);
+  const localLines = useMemo(() => sliceLines(localText, source.lines), [localText, source.lines]);
+  const displayedLines = liveLines || embeddedLines || localLines;
+  const access = useMemo(
+    () => accessInfo({ source, repository, effectiveCode, hasLocalSource }),
+    [source, repository, effectiveCode, hasLocalSource],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    setSnapshotLoading(true);
+    getProjectSourceSnapshot(project.id)
+      .then((snapshot) => { if (!cancelled) setLocalSnapshot(snapshot || null); })
+      .catch(() => { if (!cancelled) setLocalSnapshot(null); })
+      .finally(() => { if (!cancelled) setSnapshotLoading(false); });
+    return () => { cancelled = true; };
+  }, [project.id]);
 
   useEffect(() => {
     let cancelled = false;
     setLiveLines(null);
     setLoadError('');
 
-    if (!isCode || !repository || !source.path || !source.lines?.start || !connection) return undefined;
+    if (!effectiveCode || !repository || !source.path || !source.lines?.start || !connection) return undefined;
     const ref = source.commit || source.ref || repository.defaultRef || 'main';
     setLoading(true);
     readRepositoryFile(connection, repository.repository, source.path, ref)
@@ -92,7 +134,43 @@ export default function SourceDrawer({ source, project, connection, onClose }) {
       });
 
     return () => { cancelled = true; };
-  }, [isCode, source, repository, connection]);
+  }, [effectiveCode, source, repository, connection]);
+
+  async function attachSourceFolder(event) {
+    const selectedFiles = Array.from(event.target.files || []).filter(isTextSourceFile);
+    event.target.value = '';
+    if (!selectedFiles.length) return;
+    setAttaching(true);
+    setLoadError('');
+    try {
+      const entries = await Promise.all(selectedFiles.map(async (file) => {
+        const relativePath = file.webkitRelativePath || file.name;
+        return [normalizeSourcePath(relativePath), await file.text()];
+      }));
+      const files = Object.fromEntries(entries.filter(([path]) => path));
+      const snapshot = {
+        version: 1,
+        title: selectedFiles[0]?.webkitRelativePath?.split('/')[0] || 'Attached source',
+        attachedAt: new Date().toISOString(),
+        files,
+      };
+      await saveProjectSourceSnapshot(project.id, snapshot);
+      setLocalSnapshot(snapshot);
+    } catch (error) {
+      setLoadError(`Could not attach source folder: ${error.message}`);
+    } finally {
+      setAttaching(false);
+    }
+  }
+
+  async function detachSourceFolder() {
+    try {
+      await clearProjectSourceSnapshot(project.id);
+      setLocalSnapshot(null);
+    } catch (error) {
+      setLoadError(`Could not remove attached source: ${error.message}`);
+    }
+  }
 
   async function copyCitation() {
     try {
@@ -113,7 +191,7 @@ export default function SourceDrawer({ source, project, connection, onClose }) {
       <aside className="source-drawer source-inspector" role="dialog" aria-modal="true" aria-label="Source inspector">
         <div className="source-drawer-head">
           <div>
-            <p className="panel-eyebrow">{isCode ? 'Implementation source' : 'Source evidence'}</p>
+            <p className="panel-eyebrow">{effectiveCode ? 'Implementation source' : 'Source evidence'}</p>
             <h3>{source.symbol || source.title || source.path || source.type}</h3>
             <div className={`source-access source-access-${access.id}`}><strong>{access.label}</strong><span>{access.detail}</span></div>
           </div>
@@ -122,10 +200,10 @@ export default function SourceDrawer({ source, project, connection, onClose }) {
 
         <p className="source-claim">{source.claim}</p>
         <div className="source-meta-grid">
-          <span>Type<strong>{source.type}</strong></span>
-          {isCode && <span>Origin<strong>{origin === 'repository' ? 'GitHub repository' : 'Uploaded snapshot'}</strong></span>}
+          <span>Type<strong>{effectiveCode && source.type !== 'code' ? 'code (legacy anchor)' : source.type}</strong></span>
+          {effectiveCode && <span>Origin<strong>{origin === 'repository' ? 'GitHub repository' : 'Uploaded snapshot'}</strong></span>}
           {repository && <span>Repository<strong>{repository.repository}</strong></span>}
-          {!repository && isCode && source.title && <span>Snapshot<strong>{source.title}</strong></span>}
+          {!repository && effectiveCode && source.title && <span>Snapshot<strong>{source.title}</strong></span>}
           {source.path && <span>Path<strong>{source.path}</strong></span>}
           {source.symbol && <span>Symbol<strong>{source.symbol}</strong></span>}
           {source.language && <span>Language<strong>{source.language}</strong></span>}
@@ -138,24 +216,28 @@ export default function SourceDrawer({ source, project, connection, onClose }) {
           <button type="button" onClick={copyCitation}>{copied ? 'Copied' : 'Copy citation'}</button>
         </div>
 
-        {!isCode && source.excerpt && <pre className="source-excerpt"><code>{source.excerpt}</code></pre>}
-
+        {snapshotLoading && effectiveCode && !source.excerpt && <div className="source-loading">Checking attached source snapshot…</div>}
         {loading && <div className="source-loading">Loading cited lines from GitHub…</div>}
-        {loadError && (
-          <div className="source-preview-note source-preview-warning">
-            Live preview unavailable: {loadError}. Showing the stored excerpt when available.
+        {loadError && <div className="source-preview-note source-preview-warning">{loadError}</div>}
+
+        {access.id === 'citation-only' && !snapshotLoading && (
+          <div className="source-attach-panel">
+            <div>
+              <strong>{effectiveCode ? 'Attach this project’s source folder' : 'Readable source is not stored for this citation'}</strong>
+              <p>{effectiveCode
+                ? 'Choose the extracted Unreal project or Source folder. The app stores text source locally in IndexedDB and resolves every matching path/line citation in this project. Nothing is uploaded anywhere.'
+                : 'This citation has no URL or embedded excerpt.'}</p>
+            </div>
+            {effectiveCode && (
+              <label className="source-attach-button">
+                {attaching ? 'Attaching…' : 'Attach source folder'}
+                <input type="file" multiple webkitdirectory="" directory="" onChange={attachSourceFolder} disabled={attaching} />
+              </label>
+            )}
           </div>
         )}
-        {access.id === 'citation-only' && (
-          <div className="source-preview-note source-preview-warning">
-            This anchor cannot open the original implementation because the map only stored its path/symbol metadata. It needs to be refreshed from the uploaded source snapshot with an embedded excerpt before it can function as a readable code reference.
-          </div>
-        )}
-        {isCode && origin === 'uploaded' && !displayedLines && access.id !== 'citation-only' && (
-          <div className="source-preview-note source-preview-warning">
-            This uploaded code anchor does not contain a readable excerpt. Re-author the anchor from the uploaded source snapshot.
-          </div>
-        )}
+
+        {!effectiveCode && source.excerpt && <pre className="source-excerpt"><code>{source.excerpt}</code></pre>}
         {displayedLines && (
           <pre className="source-excerpt live-source">
             <code>{displayedLines.map((line) => <span className="source-line" key={line.number}><b>{line.number}</b>{line.text || ' '}{'\n'}</span>)}</code>
@@ -163,9 +245,14 @@ export default function SourceDrawer({ source, project, connection, onClose }) {
         )}
 
         <div className="source-drawer-actions">
-          {url && <a href={url} target="_blank" rel="noreferrer">Open original source ↗</a>}
-          {!url && isCode && displayedLines && <small>Embedded from uploaded source</small>}
-          {source.observedAt && <small>Inspected {new Date(source.observedAt).toLocaleString()}</small>}
+          <div className="source-action-group">
+            {url && <a href={url} target="_blank" rel="noreferrer">Open original source ↗</a>}
+            {!url && effectiveCode && displayedLines && <small>{source.excerpt ? 'Embedded in map data' : `Resolved from ${localSnapshot?.title || 'attached source'}`}</small>}
+          </div>
+          <div className="source-action-group source-action-group-right">
+            {localSnapshot && <button type="button" className="source-detach-button" onClick={detachSourceFolder}>Remove attached source</button>}
+            {source.observedAt && <small>Inspected {new Date(source.observedAt).toLocaleString()}</small>}
+          </div>
         </div>
       </aside>
     </div>
