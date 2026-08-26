@@ -16,13 +16,20 @@ function sourceUrl(source, project) {
   return url;
 }
 
+function lineSuffix(lines) {
+  if (!lines?.start) return '';
+  return `#L${lines.start}${lines.end && lines.end !== lines.start ? `-L${lines.end}` : ''}`;
+}
+
 function citationText(source, repository) {
   if (source.type !== 'code') return source.url || source.title || source.claim;
-  const revision = source.commit || source.ref || repository?.defaultRef || 'main';
-  const linePart = source.lines?.start
-    ? `#L${source.lines.start}${source.lines.end && source.lines.end !== source.lines.start ? `-L${source.lines.end}` : ''}`
-    : '';
-  return `${repository?.repository || source.sourceId || 'repo'}@${revision}:${source.path || source.symbol || ''}${linePart}`;
+  const suffix = lineSuffix(source.lines);
+  if (repository) {
+    const revision = source.commit || source.ref || repository.defaultRef || 'main';
+    return `${repository.repository}@${revision}:${source.path || source.symbol || ''}${suffix}`;
+  }
+  const snapshot = source.title || 'uploaded source';
+  return `${snapshot}:${source.path || source.symbol || ''}${suffix}`;
 }
 
 function sliceLines(text, lines) {
@@ -33,21 +40,32 @@ function sliceLines(text, lines) {
   return all.slice(start - 1, end).map((line, index) => ({ number: start + index, text: line }));
 }
 
+function excerptLines(source) {
+  if (source.type !== 'code' || !source.excerpt) return null;
+  const all = source.excerpt.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
+  const start = source.lines?.start || 1;
+  return all.map((line, index) => ({ number: start + index, text: line }));
+}
+
 export default function SourceDrawer({ source, project, connection, onClose }) {
   const [liveLines, setLiveLines] = useState(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [copied, setCopied] = useState(false);
-  const url = sourceUrl(source, project);
   const repository = source.sourceId ? project.sourceRepositories?.find((item) => item.id === source.sourceId) : null;
+  const isCode = source.type === 'code';
+  const origin = source.origin || (repository ? 'repository' : 'uploaded');
+  const url = sourceUrl(source, project);
   const citation = useMemo(() => citationText(source, repository), [source, repository]);
+  const embeddedLines = useMemo(() => excerptLines(source), [source]);
+  const displayedLines = liveLines || embeddedLines;
 
   useEffect(() => {
     let cancelled = false;
     setLiveLines(null);
     setLoadError('');
 
-    if (source.type !== 'code' || !repository || !source.path || !source.lines?.start || !connection) return undefined;
+    if (!isCode || !repository || !source.path || !source.lines?.start || !connection) return undefined;
     const ref = source.commit || source.ref || repository.defaultRef || 'main';
     setLoading(true);
     readRepositoryFile(connection, repository.repository, source.path, ref)
@@ -62,7 +80,7 @@ export default function SourceDrawer({ source, project, connection, onClose }) {
       });
 
     return () => { cancelled = true; };
-  }, [source, repository, connection]);
+  }, [isCode, source, repository, connection]);
 
   async function copyCitation() {
     try {
@@ -78,8 +96,8 @@ export default function SourceDrawer({ source, project, connection, onClose }) {
     <aside className="source-drawer">
       <div className="source-drawer-head">
         <div>
-          <p className="panel-eyebrow">Source evidence</p>
-          <h3>{source.title || source.symbol || source.path || source.type}</h3>
+          <p className="panel-eyebrow">{isCode ? 'Implementation source' : 'Source evidence'}</p>
+          <h3>{source.symbol || source.title || source.path || source.type}</h3>
         </div>
         <button className="icon-button" type="button" onClick={onClose} aria-label="Close source drawer">×</button>
       </div>
@@ -87,9 +105,12 @@ export default function SourceDrawer({ source, project, connection, onClose }) {
       <p className="source-claim">{source.claim}</p>
       <div className="source-meta-grid">
         <span>Type<strong>{source.type}</strong></span>
+        {isCode && <span>Origin<strong>{origin === 'repository' ? 'GitHub repository' : 'Uploaded snapshot'}</strong></span>}
         {repository && <span>Repository<strong>{repository.repository}</strong></span>}
+        {!repository && isCode && source.title && <span>Snapshot<strong>{source.title}</strong></span>}
         {source.path && <span>Path<strong>{source.path}</strong></span>}
         {source.symbol && <span>Symbol<strong>{source.symbol}</strong></span>}
+        {source.language && <span>Language<strong>{source.language}</strong></span>}
         {source.lines && <span>Lines<strong>{source.lines.start}{source.lines.end !== source.lines.start ? `–${source.lines.end}` : ''}</strong></span>}
         {(source.commit || source.ref) && <span>Revision<strong>{source.commit ? source.commit.slice(0, 12) : source.ref}</strong></span>}
       </div>
@@ -99,22 +120,28 @@ export default function SourceDrawer({ source, project, connection, onClose }) {
         <button type="button" onClick={copyCitation}>{copied ? 'Copied' : 'Copy citation'}</button>
       </div>
 
-      {source.excerpt && !liveLines && <pre className="source-excerpt"><code>{source.excerpt}</code></pre>}
+      {!isCode && source.excerpt && <pre className="source-excerpt"><code>{source.excerpt}</code></pre>}
 
       {loading && <div className="source-loading">Loading cited lines from GitHub…</div>}
       {loadError && (
         <div className="source-preview-note">
-          Live preview unavailable: {loadError}. The citation is still valid; give this browser token access to the source repository if you want inline code.
+          Live preview unavailable: {loadError}. Showing the stored excerpt when available.
         </div>
       )}
-      {liveLines && (
+      {isCode && origin === 'uploaded' && !displayedLines && (
+        <div className="source-preview-note">
+          This uploaded code anchor does not contain a readable excerpt. Re-author the anchor from the uploaded source snapshot.
+        </div>
+      )}
+      {displayedLines && (
         <pre className="source-excerpt live-source">
-          <code>{liveLines.map((line) => <span className="source-line" key={line.number}><b>{line.number}</b>{line.text || ' '}{'\n'}</span>)}</code>
+          <code>{displayedLines.map((line) => <span className="source-line" key={line.number}><b>{line.number}</b>{line.text || ' '}{'\n'}</span>)}</code>
         </pre>
       )}
 
       <div className="source-drawer-actions">
         {url && <a href={url} target="_blank" rel="noreferrer">Open source ↗</a>}
+        {!url && isCode && origin === 'uploaded' && <small>Embedded from uploaded source</small>}
         {source.observedAt && <small>Inspected {new Date(source.observedAt).toLocaleString()}</small>}
       </div>
     </aside>
