@@ -100,6 +100,7 @@ export default function ConceptPanel({
   );
   const explanationLocked = Boolean(unansweredPrediction && !revealExplanation);
   const pinned = Boolean(activeWorkspace?.conceptIds?.includes(concept.id));
+  const canDive = Boolean(concept.detailGraph && concept.detailGraph !== graphId);
 
   function submitAnnotation(event) {
     event.preventDefault();
@@ -140,7 +141,7 @@ export default function ConceptPanel({
         </div>
         {activeWorkspace && <div className="workspace-hint">Pinning to: <strong>{activeWorkspace.title}</strong></div>}
 
-        {concept.detailGraph && (
+        {canDive && (
           <button className="primary-button dive-button" type="button" onClick={() => onDive(concept.detailGraph, concept.title)}>Dive deeper ↘</button>
         )}
 

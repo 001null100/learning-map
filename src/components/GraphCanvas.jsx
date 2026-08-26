@@ -92,6 +92,7 @@ export default function GraphCanvas({
       );
       const questions = openAnnotations.filter((item) => item.type === 'question').length;
       const unfamiliar = openAnnotations.filter((item) => item.type === 'unfamiliar-term').length;
+      const detailGraph = concept.detailGraph && concept.detailGraph !== graph?.id ? concept.detailGraph : null;
 
       return {
         id: node.id,
@@ -101,8 +102,8 @@ export default function GraphCanvas({
           conceptId: node.concept,
           label: node.labelOverride || concept.title || node.concept,
           summary: concept.summary || '',
-          detailGraph: concept.detailGraph || null,
-          hasDetail: Boolean(concept.detailGraph),
+          detailGraph,
+          hasDetail: Boolean(detailGraph),
           kind: concept.kind || node.kind || 'knowledge',
           nodeKind: node.kind || 'concept',
           learning,
@@ -114,7 +115,7 @@ export default function GraphCanvas({
         },
       };
     });
-  }, [visibleGraphNodes, concepts, learningState]);
+  }, [visibleGraphNodes, concepts, learningState, graph?.id]);
 
   const makeEdges = useMemo(() => () => {
     if (!graph) return [];
