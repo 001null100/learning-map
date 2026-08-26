@@ -5,6 +5,7 @@ import {
   getProjectSourceSnapshot,
   saveProjectSourceSnapshot,
 } from '../lib/storage.js';
+import SyntaxCode from './SyntaxCode.jsx';
 
 const TEXT_SOURCE_EXTENSIONS = new Set([
   'h', 'hpp', 'hh', 'c', 'cc', 'cpp', 'cxx', 'cs', 'ini', 'json', 'txt', 'md', 'uproject', 'uplugin',
@@ -238,10 +239,8 @@ export default function SourceDrawer({ source, project, connection, onClose }) {
         )}
 
         {!effectiveCode && source.excerpt && <pre className="source-excerpt"><code>{source.excerpt}</code></pre>}
-        {displayedLines && (
-          <pre className="source-excerpt live-source">
-            <code>{displayedLines.map((line) => <span className="source-line" key={line.number}><b>{line.number}</b>{line.text || ' '}{'\n'}</span>)}</code>
-          </pre>
+        {displayedLines && effectiveCode && (
+          <SyntaxCode lines={displayedLines} language={source.language} path={source.path} />
         )}
 
         <div className="source-drawer-actions">
